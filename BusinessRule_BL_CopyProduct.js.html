@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: BusinessRule_BL_CopyProduct.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: BusinessRule_BL_CopyProduct.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/*===== export metadata =====
+{
+  "contextId" : "Context1",
+  "workspaceId" : "Approved"
+}
+*/
+/*===== business rule definition =====
+{
+  "id" : "BL_CopyProduct",
+  "type" : "BusinessLibrary",
+  "setupGroups" : [ "Libraries" ],
+  "name" : "BL_CopyProduct",
+  "description" : null,
+  "scope" : null,
+  "validObjectTypes" : [ ],
+  "allObjectTypesValid" : false,
+  "runPrivileged" : false,
+  "onApprove" : null,
+  "dependencies" : [ {
+    "libraryId" : "BL_Library",
+    "libraryAlias" : "BL_Library"
+  }, {
+    "libraryId" : "BL_MaintenanceWorkflows",
+    "libraryAlias" : "BL_MaintenanceWorkflows"
+  }, {
+    "libraryId" : "BL_TechTransfer",
+    "libraryAlias" : "BL_TechTransfer"
+  } ]
+}
+*/
+/*===== business rule plugin definition =====
+{
+  "pluginId" : "JavaScriptBusinessLibrary",
+  "binds" : [ ],
+  "messages" : [ ],
+  "pluginType" : "Operation"
+}
+*/
+//STEP-6176
+function duplicateProduct(step,sourceProduct,newProduct){
+    var noCopyAttGroup = step.getAttributeGroupHome().getAttributeGroupByID("Product_NotCopy_Attributes");
+    var noCopyAttrArray = [];
+    var lstNoAttributes = noCopyAttGroup.getAttributes();
+    var groupIterator = lstNoAttributes.iterator();
+    while (groupIterator.hasNext()) {
+      var attr = groupIterator.next();
+          noCopyAttrArray.push(attr.getID());
+    }
+              
+    //Copy attributes for the group "Product_Attributes"
+    BL_Library.copyAttributes(step, sourceProduct, newProduct, "Product_Attributes", noCopyAttrArray); 
+    
+    //Update the Name in case of CarrierFree copy type
+    if (newProduct.getValue("COPYTYPE").getSimpleValue() == "CarrierFree"){
+        var parentProdName = BL_TechTransfer.removeStringFormulated(sourceProduct.getName()) + " (BSA and Azide Free)"; // STEP-6408
+        newProduct.setName(parentProdName); // STEP-6408
+        newProduct.getValue("PRODUCTNAME").setSimpleValue(parentProdName); // STEP-6408
+        
+        var parentProdShortName = sourceProduct.getValue("PRODUCTSHORTNAME").getSimpleValue(); // STEP-6852 start
+    
+        if(parentProdShortName) {
+            newProduct.getValue("PRODUCTSHORTNAME").setSimpleValue(BL_TechTransfer.removeStringFormulated(parentProdShortName) + " (BSA and Azide Free)");
+        }
+        else {
+            newProduct.getValue("PRODUCTSHORTNAME").setSimpleValue("");
+        } //STEP-6852 end
+        //var brShortNameCreation = step.getHome(com.stibo.core.domain.businessrule.BusinessRuleHome).getBusinessActionByID(brShortNameCreationID);
+        //brShortNameCreation.execute(newProduct); // STEP-6408
+    }
+    
+    //Update Product Status and History
+    newProduct.getValue("Product_Status").setSimpleValue("Product-Planned");
+    
+    //Create reference "Product_To_Parent_Product" if not esists
+    if (sourceProduct == null){
+        log.info("No Parent Product");
+    }
+    else	{
+        var refTarget = BL_Library.getReferenceTarget(newProduct, "Product_To_Parent_Product");
+        if(refTarget){
+           if(!refTarget.equals(sourceProduct)){
+                 newProduct.createReference(sourceProduct, "Product_To_Parent_Product");
+           }
+        } else {
+        newProduct.createReference(sourceProduct, "Product_To_Parent_Product");
+        }
+    }	
+    
+    //delete  bibliography if exists
+    var children = newProduct.getChildren();
+    if (children) {
+        for (var i = 0; i &lt; children.size(); i++) {
+            var child = children.get(i);
+            if (child.getObjectType().getID() == "Product_Bibliography_Folder") {
+                BL_Library.deleteRefByRecursively(child); // STEP-6789
+                BL_Library.deleteRecursively(child);
+                child.delete();
+            }
+        }
+    }
+    //copy bibliogrphy
+    copyBiblioCitations(step, sourceProduct, newProduct );
+    }
+    
+    
+    
+    //Create new Product_Bibliography_Folder and it's name under Product, and Product_Bibliography_Citations under Bibliography folder 
+    //from the source Product to the target Product
+    function copyBiblioCitations(step, pSourceProduct, pTargetProduct) {
+    
+        var children = pSourceProduct.getChildren();
+         var pSourceHasBiblioFolder = false; //STEP-6847	
+        if (children) {
+            for (var i = 0; i &lt; children.size(); i++) {
+                var child = children.get(i);
+    
+                if (child.getObjectType().getID() == "Product_Bibliography_Folder") {
+                var newBibFolder = pTargetProduct.createProduct(null, "Product_Bibliography_Folder");
+                var pTargetProductNo = pTargetProduct.getValue("PRODUCTNO").getSimpleValue();
+                newBibFolder.setName(pTargetProductNo + "_Bibliography");
+                pSourceHasBiblioFolder = true; //STEP-6847
+                   
+                   var sourceCitations =  child.getChildren();   
+                   if (sourceCitations) {
+                     for (var j = 0; j &lt; sourceCitations.size(); j++) {
+                        var sourceCitation = sourceCitations.get(j);
+                     
+                            if (sourceCitation.getObjectType().getID() == "Product_Bibliography_Citation") {
+                                var newBibCit = newBibFolder.createProduct(null, "Product_Bibliography_Citation");
+                                newBibCit.setName(sourceCitation.getName()); 
+                                BL_Library.copyAttributes(step, sourceCitation, newBibCit, "PRODUCT_BIBLIOGRAPHY", null);
+                            }
+                        }
+                    }
+    
+                }
+            }
+        }
+        //STEP-6847
+        if ((!pSourceHasBiblioFolder) &amp;&amp; (pTargetProduct.getValue("COPYTYPE").getSimpleValue() == "CarrierFree")) {
+            var newBibFolder = pTargetProduct.createProduct(null, "Product_Bibliography_Folder");
+            var pTargetProductNo = pTargetProduct.getValue("PRODUCTNO").getSimpleValue();
+            newBibFolder.setName(pTargetProductNo + "_Bibliography");
+        }
+    }
+    
+    
+    // STEP-7110
+    /**
+     * To create SDS Folder
+     * @param {Product} targetProduct STEP product object (Product, Product Kit, Equipment, Service)
+     */
+    function createSDSFolder(targetProduct) {
+        var folder = BL_Library.getProductChildren(targetProduct, "Product_SDS_Folder");
+        if (folder.length == 0) {
+            var prodNo = targetProduct.getValue("PRODUCTNO").getSimpleValue();
+            var productSDSFolder = targetProduct.createProduct(null, "Product_SDS_Folder");
+            productSDSFolder.setName(prodNo + "_SDSDocuments");
+            productSDSFolder.getValue("PRODUCTNO").setSimpleValue(prodNo);
+        }
+    }
+    
+    
+    // STEP-6254 Code refactor: OIEP BRs, new BL
+    /**
+     * To identify if itemcode is valid for a product
+     * @param {String} itemcode String, item code (BC, MC, MF, S, ...) 
+     * @param {Product} product STEP product object (Product, Product Kit, Equipment, Service)
+     * @returns {Boolean} true, if there is a default for product PRODUCTTYPE including provided itemcode; false otherwise
+     */
+    function isItemValidForProduct(itemcode, product, manager) {
+    
+        log.info(" masteritemcode : " + itemcode);
+        var productType = product.getValue("PRODUCTTYPE").getSimpleValue();
+        log.info("productType: " + productType);
+    
+        var conditions = com.stibo.query.condition.Conditions;
+        var isSKUDefault = conditions.objectType(manager.getObjectTypeHome().getObjectTypeByID("SKUDefault"));
+        var hasProductType = conditions.valueOf(manager.getAttributeHome().getAttributeByID("PRODUCTTYPE_DFLT")).eq(productType);
+        //var hasItemStockFormat = conditionsRevision.valueOf(manager.getAttributeHome().getAttributeByID("ITEMSTOCKFORMAT_DFLT")).eq("MASTER");
+        var hasItemCode = conditions.valueOf(manager.getAttributeHome().getAttributeByID("ItemCode_DFLT")).eq(itemcode);
+    
+        var queryHomeRevision = manager.getHome(com.stibo.query.home.QueryHome);
+        var querySpecification = queryHomeRevision.queryFor(com.stibo.core.domain.entity.Entity).where(isSKUDefault.and(hasProductType).and(hasItemCode));
+    
+        var resultEntity = querySpecification.execute();
+        var resultArrEntity = []
+        resultEntity.forEach(function loop(item) {
+            resultArrEntity.push(item);
+            return true;
+        });
+    
+        log.info("Matched Item Codes: " + resultArrEntity.length);
+    
+        for (var i = 0; i &lt; resultArrEntity.length; i++) {
+            var eItemDefault = resultArrEntity[i];
+    
+            var sProductTypeDefault = eItemDefault.getValue("PRODUCTTYPE_DFLT").getSimpleValue();
+            var sDefaultItemCode = eItemDefault.getValue("ItemCode_DFLT").getSimpleValue();
+            var sDefaultItemStockFormat = eItemDefault.getValue("ITEMSTOCKFORMAT_DFLT").getSimpleValue();
+            log.info("item default name: " + eItemDefault.getName() + ", sProductTypeDefault: " + sProductTypeDefault + ", sDefaultItemCode : " + sDefaultItemCode + ", sDefaultItemStockFormat : " + sDefaultItemStockFormat);
+        }
+    
+        if (resultArrEntity.length > 0) {
+            return true;
+        }
+    
+        return false;
+    }
+    
+    
+    /**
+     * To retrieve list of products for which ORIGIN_PRODNO_REVNO include PRODUCTNO of the product argument object
+     * @param {Product} product STEP object product
+     * @param {Manager} manager STEP manager
+     * @returns {Product[]} list of products for which ORIGIN_PRODNO_REVNO include PRODUCTNO of the product argument object
+     */
+    function getProductCopies(product, manager) {
+    
+        var productno = product.getValue("PRODUCTNO").getSimpleValue();
+    
+        var conditions = com.stibo.query.condition.Conditions;
+        var isProduct = conditions.objectType(manager.getObjectTypeHome().getObjectTypeByID("Product"));
+        var isProductKit = conditions.objectType(manager.getObjectTypeHome().getObjectTypeByID("Product_Kit"));
+        var isEquipment = conditions.objectType(manager.getObjectTypeHome().getObjectTypeByID("Equipment"));
+        var hasOriginProduct = conditions.valueOf(manager.getAttributeHome().getAttributeByID("ORIGIN_PRODNO_REVNO")).like(productno + "*");
+    
+        var queryHome = manager.getHome(com.stibo.query.home.QueryHome);
+        var querySpecification = queryHome.queryFor(com.stibo.core.domain.Product).where(((isProduct).or(isProductKit).or(isEquipment)).and(hasOriginProduct));
+    
+        var result = querySpecification.execute();
+        var resultArr = []
+        result.forEach(function loop(item) {
+            resultArr.push(item);
+            return true;
+        });
+    
+        for (var i = 0; i &lt; resultArr.length; i++) {
+            var copyProduct = resultArr[i];
+            log.info("Found copy of " + product.getValue("PRODUCTNO").getSimpleValue() + ": " + copyProduct.getValue("PRODUCTNO").getSimpleValue());
+        }
+    
+        return resultArr;
+    }
+    
+    //STEP-6193
+    function getAcceptedValue(storedAttributes, product){
+        var result = "";	
+    
+        for (var j = 0; j &lt; storedAttributes.length; j++) {
+            var attrID = storedAttributes[j];
+            var attrVal = product.getValue(attrID).getSimpleValue();
+            result += attrID + "=" + attrVal;
+            
+            if (j != storedAttributes.length - 1) {
+                result += ";";
+             }        
+        }
+        return result;
+    }
+/*===== business library exports - this part will not be imported to STEP =====*/
+exports.duplicateProduct = duplicateProduct
+exports.copyBiblioCitations = copyBiblioCitations
+exports.createSDSFolder = createSDSFolder
+exports.isItemValidForProduct = isItemValidForProduct
+exports.getProductCopies = getProductCopies
+exports.getAcceptedValue = getAcceptedValue</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#checkPRODUCTNAMETagContentReviewWF">checkPRODUCTNAMETagContentReviewWF</a></li><li><a href="global.html#copyAttributes">copyAttributes</a></li><li><a href="global.html#copyMultiValuedAttribute">copyMultiValuedAttribute</a></li><li><a href="global.html#createSDSFolder">createSDSFolder</a></li><li><a href="global.html#getCurrentWorkflowAndStateOfProduct">getCurrentWorkflowAndStateOfProduct</a></li><li><a href="global.html#getLotNumbers">getLotNumbers</a></li><li><a href="global.html#getLotRecombinantFlag">getLotRecombinantFlag</a></li><li><a href="global.html#getMasterStockForRevision">getMasterStockForRevision</a></li><li><a href="global.html#getPreviousPrice">getPreviousPrice</a></li><li><a href="global.html#getProductCopies">getProductCopies</a></li><li><a href="global.html#getProductWIPRevision">getProductWIPRevision</a></li><li><a href="global.html#getRevisionsOfProductInWorkflow">getRevisionsOfProductInWorkflow</a></li><li><a href="global.html#getSkusMarketingEmpty">getSkusMarketingEmpty</a></li><li><a href="global.html#isCurrentRevision">isCurrentRevision</a></li><li><a href="global.html#isItemInArray">isItemInArray</a></li><li><a href="global.html#isItemValidForProduct">isItemValidForProduct</a></li><li><a href="global.html#isObjectValidForClassificationProductLinkType">isObjectValidForClassificationProductLinkType</a></li><li><a href="global.html#isObjectValidForReferenceType">isObjectValidForReferenceType</a></li><li><a href="global.html#replaceTagPRODUCTNAMEContent">replaceTagPRODUCTNAMEContent</a></li><li><a href="global.html#republishProductBibliography">republishProductBibliography</a></li><li><a href="global.html#revisionContainsShippingLot">revisionContainsShippingLot</a></li><li><a href="global.html#storeMultiValueInString">storeMultiValueInString</a></li><li><a href="global.html#toCompareOGandNewShippingConditions">toCompareOGandNewShippingConditions</a></li><li><a href="global.html#triggerTransition">triggerTransition</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.2</a> on Fri Jan 05 2024 12:43:16 GMT+0100 (Central European Standard Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
